@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>I Ain't Got Time For This Shit Today</title>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Firebase -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+    import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+    
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDRhVeDuJ5YwXEO2ahBi4AVbesEatysRnI",
+      authDomain: "iagftfst.firebaseapp.com",
+      projectId: "iagftfst",
+      storageBucket: "iagftfst.firebasestorage.app",
+      messagingSenderId: "439757598606",
+      appId: "1:439757598606:web:8293fbd179dd9bf304bedf"
+    };
+
+    const app       = initializeApp(firebaseConfig);
+    const auth      = getAuth(app);
+    const db        = getFirestore(app);
+    
+
+    var currentUser    = null;
+    var allPrompts     = [];
+    var activeCategory = "All";
+
+    // ── Auth state ──────────────────────────────────────────
+    onAuthStateChanged(auth, function(user) {
+      currentUser = user;
+      if (user) {
+        document.getElementById("landing").style.display    = "none";
+        document.getElementById("app").style.display        = "block";
+        document.getElementById("user-email").textContent   = user.email;
+        loadPrompts();
+      } else {
+        document.getElementById("landing").style.display    = "flex";
+        document.getElementById("app").style.display        = "none";
+      }
+    });
+
+    // ── Login ───────────────────────────────────────────────
+    window.doLogin = function() {
+      var email = document.getElementById("login-email").value.trim();
+      var pass  = document.getElementById("login-pass").value.trim();
+      var err   = document.getElementById("login-error");
+      err.textContent = "";
+      signInWithEmailAndPassword(auth, email, pass)
+        .catch(function(e) { err.textContent = "Wrong email or password. Try again."; });
+    };
+
+    window.doLogout = function() { signOut(auth); };
+
+    // ── Load prompts ────────────────────────────────────────
+    async function loadPrompts() {
+      var grid = document.getElementById("prompt-grid");
+      grid.innerHTML = '<div class="loading">Loading prompts...</div>';
+      try {
+        var q    = query(collection(db, "prompts"), orderBy("createdAt", "desc"));
+        var snap = await getDocs(q);
+        allPrompts = [];
+        snap.forEach(function(d) { allPrompts.push({ id: d.id, ...d.data() }); });
+        renderPrompts();
+      } catch(e) {
+        grid.innerHTML = '<div class="loading">Error loading prompts. Try refreshing.</div>';
+      }
+    }
+
+    function renderPrompts() {
+      var grid     = document.getElementById("prompt-grid");
+      var filtered = activeCategory === "All"
+        ? allPrompts
+        : allPrompts.filter(function(p) { return p.category === activeCategory; });
+
+      if (filtered.length === 0) {
+        grid.innerHTML = '<div class="empty-state">No prompts in this category yet.<br>Be the first to submit one! 👇</div>';
+        return;
+      }
+
+      grid.innerHTML = filtered.map(function(p) {
+        var catColor = CAT_COLORS[p.category] || "#888";
+        var isAdmin  = currentUser && (currentUser.email === "bayhasmail@gmail.com" || currentUser.email === "markel.jeff@gmail.com");
+        return '<div class="prompt-card">' +
+          (p.imageUrl ? '<img class="card-img" src="' + p.imageUrl + '" alt="' + p.productName + '">' : '<div class="card-img-placeholder">📦</div>') +
+          '<div class="card-body">' +
+            '<div class="card-top">' +
+              '<span class="cat-tag" style="background:' + catColor + '22;color:' + catColor + ';border-color:' + catColor + '44">' + p.category + '</span>' +
+              (p.proven ? '<span class="proven-badge">✅ Proven Seller</span>' : '') +
+            '</div>' +
+            '<div class="card-product">' + p.productName + '</div>' +
+            '<div class="card-desc">' + p.description + '</div>' +
+            '<div class="card-prompt">' + p.prompt + '</div>' +
+            '<div class="card-actions">' +
+              '<button class="btn-copy" onclick="copyPrompt(\'' + p.id + '\')">📋 Copy Prompt</button>' +
+              (isAdmin ? '<button class="btn-delete" onclick="deletePrompt(\'' + p.id + '\')">🗑</button>' : '') +
+            '</div>' +
+            '<div class="card-submitter">Submitted by ' + (p.submittedBy || "anonymous") + '</div>' +
+          '</div>' +
+        '</div>';
+      }).join("");
+    }
+
+    window.filterCategory = function(cat, el) {
+      activeCategory = cat;
+      document.querySelectorAll(".cat-filter-btn").forEach(function(b) { b.classList.remove("active"); });
+      el.classList.add("active");
+      renderPrompts();
+    };
+
+    // ── Copy prompt ─────────────────────────────────────────
+    window.copyPrompt = function(id) {
+      var p = allPrompts.find(function(x) { return x.id === id; });
+      if (!p) return;
+      navigator.clipboard.writeText(p.prompt).then(function() {
+        showToast("Prompt copied! Go post that thing 🔥");
+      }).catch(function() {
+        var ta = document.createElement("textarea");
+        ta.value = p.prompt;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        showToast("Prompt copied! Go post that thing 🔥");
+      });
+    };
+
+    // ── Delete prompt (admin only) ───────────────────────────
+    window.deletePrompt = async function(id) {
+      if (!confirm("Delete this prompt?")) return;
+      await deleteDoc(doc(db, "prompts", id));
+      allPrompts = allPrompts.filter(function(p) { return p.id !== id; });
+      renderPrompts();
+      showToast("Deleted.");
+    };
+
+    // ── Submit prompt ────────────────────────────────────────
+    window.submitPrompt = async function() {
+      var productName = document.getElementById("sub-product").value.trim();
+      var description = document.getElementById("sub-desc").value.trim();
+      var category    = document.getElementById("sub-category").value;
+      var prompt      = document.getElementById("sub-prompt").value.trim();
+      var proven      = document.getElementById("sub-proven").checked;
+      var imgFile     = document.getElementById("sub-image").files[0];
+      var btn         = document.getElementById("sub-btn");
+      var status      = document.getElementById("sub-status");
+
+      if (!productName || !description || !prompt) {
+        status.textContent = "⚠️ Fill in all fields.";
+        status.className   = "sub-status error";
+        return;
+      }
+
+      btn.disabled    = true;
+      btn.textContent = "Submitting...";
+      status.textContent = "";
+
+      try {
+        var imageUrl = "";
+        // Image upload disabled on free plan
+
+        await addDoc(collection(db, "prompts"), {
+          productName:  productName,
+          description:  description,
+          category:     category,
+          prompt:       prompt,
+          proven:       proven,
+          imageUrl:     imageUrl,
+          submittedBy:  currentUser.email.split("@")[0],
+          createdAt:    serverTimestamp()
+        });
+
+        document.getElementById("sub-product").value  = "";
+        document.getElementById("sub-desc").value     = "";
+        document.getElementById("sub-prompt").value   = "";
+        document.getElementById("sub-image").value    = "";
+        document.getElementById("sub-proven").checked = false;
+        document.getElementById("sub-category").value = "Sneakers";
+
+        status.textContent = "✅ Prompt submitted!";
+        status.className   = "sub-status success";
+        btn.textContent    = "Submit Prompt";
+        btn.disabled       = false;
+        closeSubmit();
+        loadPrompts();
+      } catch(e) {
+        status.textContent = "❌ Error: " + e.message;
+        status.className   = "sub-status error";
+        btn.textContent    = "Submit Prompt";
+        btn.disabled       = false;
+      }
+    };
+
+    window.openSubmit  = function() { document.getElementById("submit-modal").classList.add("open"); };
+    window.closeSubmit = function() { document.getElementById("submit-modal").classList.remove("open"); };
+
+    function showToast(msg) {
+      var t = document.getElementById("toast");
+      t.textContent = msg;
+      t.classList.add("show");
+      setTimeout(function() { t.classList.remove("show"); }, 3000);
+    }
+
+    window.handleLoginKey = function(e) { if (e.key === "Enter") doLogin(); };
+  </script>
+
+  <style>
+    :root {
+      --yellow:  #FFE500;
+      --coral:   #FF4D4D;
+      --green:   #00E676;
+      --purple:  #B388FF;
+      --blue:    #40C4FF;
+      --orange:  #FF9100;
+      --bg:      #0d0d0d;
+      --card:    #161616;
+      --card2:   #1e1e1e;
+      --border:  #2a2a2a;
+      --text:    #F5F5F5;
+      --muted:   #888;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* ── LANDING ─────────────────────────────────────────── */
+    #landing {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+      background: var(--bg);
+      position: relative;
+      overflow: hidden;
+    }
+
+    #landing::before {
+      content: "";
+      position: absolute;
+      top: -100px; left: -100px;
+      width: 400px; height: 400px;
+      background: radial-gradient(circle, #FFE50022 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    #landing::after {
+      content: "";
+      position: absolute;
+      bottom: -100px; right: -100px;
+      width: 400px; height: 400px;
+      background: radial-gradient(circle, #FF4D4D18 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .landing-title {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(2.8rem, 10vw, 5.5rem);
+      line-height: 0.92;
+      text-align: center;
+      color: var(--yellow);
+      text-shadow: 4px 4px 0px #FF4D4D44;
+      transform: rotate(-1.5deg);
+      margin-bottom: 0.5rem;
+      letter-spacing: 0.02em;
+    }
+
+    .landing-sub {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-align: center;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      margin-bottom: 2.5rem;
+    }
+
+    .login-box {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 2rem;
+      width: 100%;
+      max-width: 380px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .login-box h2 {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 1.25rem;
+      text-align: center;
+    }
+
+    .login-box input {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 0.95rem;
+      padding: 0.75rem 1rem;
+      outline: none;
+      margin-bottom: 0.75rem;
+      font-family: inherit;
+      transition: border-color 0.2s;
+    }
+
+    .login-box input:focus { border-color: var(--yellow); }
+
+    .btn-login {
+      width: 100%;
+      padding: 0.85rem;
+      background: var(--yellow);
+      border: none;
+      border-radius: 8px;
+      color: #000;
+      font-size: 1rem;
+      font-weight: 800;
+      cursor: pointer;
+      font-family: inherit;
+      transition: opacity 0.2s;
+      letter-spacing: 0.05em;
+    }
+
+    .btn-login:hover { opacity: 0.9; }
+
+    .login-error {
+      font-size: 0.82rem;
+      color: var(--coral);
+      text-align: center;
+      margin-top: 0.5rem;
+      min-height: 1.2rem;
+    }
+
+    /* ── APP ─────────────────────────────────────────────── */
+    #app { display: none; }
+
+    .top-bar {
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      padding: 0.85rem 1.25rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .top-bar-title {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 1.4rem;
+      color: var(--yellow);
+      letter-spacing: 0.04em;
+      line-height: 1;
+    }
+
+    .top-bar-right {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .user-pill {
+      font-size: 0.75rem;
+      color: var(--muted);
+      background: var(--card2);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 0.3rem 0.75rem;
+    }
+
+    .btn-logout {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--muted);
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.35rem 0.75rem;
+      cursor: pointer;
+      font-family: inherit;
+      transition: color 0.2s;
+    }
+
+    .btn-logout:hover { color: var(--coral); border-color: var(--coral); }
+
+    .main { padding: 1.25rem; max-width: 1100px; margin: 0 auto; }
+
+    /* ── Category filters ────────────────────────────────── */
+    .filter-row {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      margin-bottom: 1.25rem;
+      align-items: center;
+    }
+
+    .cat-filter-btn {
+      padding: 0.5rem 1rem;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--muted);
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+
+    .cat-filter-btn:hover { border-color: var(--yellow); color: var(--yellow); }
+    .cat-filter-btn.active { background: var(--yellow); border-color: var(--yellow); color: #000; }
+
+    .btn-submit-new {
+      margin-left: auto;
+      padding: 0.55rem 1.25rem;
+      border-radius: 20px;
+      border: none;
+      background: var(--coral);
+      color: white;
+      font-size: 0.85rem;
+      font-weight: 700;
+      cursor: pointer;
+      font-family: inherit;
+      transition: opacity 0.2s;
+      white-space: nowrap;
+    }
+
+    .btn-submit-new:hover { opacity: 0.85; }
+
+    /* ── Prompt grid ─────────────────────────────────────── */
+    .prompt-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 1rem;
+    }
+
+    .prompt-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transition: border-color 0.2s, transform 0.15s;
+    }
+
+    .prompt-card:hover { border-color: #3a3a3a; transform: translateY(-2px); }
+
+    .card-img {
+      width: 100%;
+      height: 180px;
+      object-fit: cover;
+    }
+
+    .card-img-placeholder {
+      width: 100%;
+      height: 140px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 3rem;
+      background: var(--card2);
+    }
+
+    .card-body { padding: 1rem; flex: 1; display: flex; flex-direction: column; gap: 0.5rem; }
+
+    .card-top { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+
+    .cat-tag {
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 2px 9px;
+      border-radius: 20px;
+      border: 1px solid;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .proven-badge {
+      font-size: 0.7rem;
+      font-weight: 700;
+      color: var(--green);
+      background: #00E67618;
+      border: 1px solid #00E67630;
+      padding: 2px 9px;
+      border-radius: 20px;
+    }
+
+    .card-product {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--text);
+      line-height: 1.3;
+    }
+
+    .card-desc {
+      font-size: 0.82rem;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .card-prompt {
+      font-size: 0.78rem;
+      color: #aaa;
+      background: var(--card2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.65rem;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      max-height: 120px;
+      overflow-y: auto;
+      font-family: 'Courier New', monospace;
+      flex: 1;
+    }
+
+    .card-actions { display: flex; gap: 0.5rem; margin-top: 0.25rem; }
+
+    .btn-copy {
+      flex: 1;
+      padding: 0.65rem;
+      border-radius: 8px;
+      border: none;
+      background: var(--yellow);
+      color: #000;
+      font-size: 0.85rem;
+      font-weight: 800;
+      cursor: pointer;
+      font-family: inherit;
+      transition: opacity 0.2s;
+    }
+
+    .btn-copy:hover { opacity: 0.85; }
+
+    .btn-delete {
+      padding: 0.65rem 0.85rem;
+      border-radius: 8px;
+      border: 1px solid #333;
+      background: #1a0a0a;
+      color: var(--coral);
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .btn-delete:hover { background: #2a0a0a; }
+
+    .card-submitter {
+      font-size: 0.7rem;
+      color: #444;
+      margin-top: 0.25rem;
+    }
+
+    .loading, .empty-state {
+      grid-column: 1 / -1;
+      text-align: center;
+      color: var(--muted);
+      padding: 3rem;
+      font-size: 0.95rem;
+      line-height: 1.8;
+    }
+
+    /* ── Submit modal ────────────────────────────────────── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.85);
+      z-index: 999;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+
+    .modal-overlay.open { display: flex; }
+
+    .modal {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.5rem;
+      width: 100%;
+      max-width: 520px;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.25rem;
+    }
+
+    .modal-title {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 1.6rem;
+      color: var(--yellow);
+      letter-spacing: 0.04em;
+    }
+
+    .modal-close {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      border-radius: 6px;
+      padding: 0.3rem 0.75rem;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 0.85rem;
+    }
+
+    .modal label {
+      display: block;
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin-bottom: 0.4rem;
+    }
+
+    .modal input[type="text"],
+    .modal select,
+    .modal textarea {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 0.92rem;
+      padding: 0.7rem 0.9rem;
+      outline: none;
+      margin-bottom: 1rem;
+      font-family: inherit;
+      transition: border-color 0.2s;
+    }
+
+    .modal textarea { resize: vertical; min-height: 120px; }
+    .modal input:focus, .modal select:focus, .modal textarea:focus { border-color: var(--yellow); }
+
+    .proven-row {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      margin-bottom: 1rem;
+    }
+
+    .proven-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--green); cursor: pointer; }
+    .proven-row span { font-size: 0.88rem; color: var(--text); }
+
+    .btn-submit {
+      width: 100%;
+      padding: 0.9rem;
+      background: var(--coral);
+      border: none;
+      border-radius: 10px;
+      color: white;
+      font-size: 1rem;
+      font-weight: 800;
+      cursor: pointer;
+      font-family: inherit;
+      transition: opacity 0.2s;
+      letter-spacing: 0.05em;
+    }
+
+    .btn-submit:hover { opacity: 0.85; }
+    .btn-submit:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .sub-status { font-size: 0.85rem; text-align: center; padding: 0.5rem 0; min-height: 1.5rem; }
+    .sub-status.success { color: var(--green); }
+    .sub-status.error   { color: var(--coral); }
+
+    /* ── Toast ───────────────────────────────────────────── */
+    #toast {
+      position: fixed;
+      bottom: 1.5rem;
+      left: 50%;
+      transform: translateX(-50%) translateY(80px);
+      background: var(--yellow);
+      color: #000;
+      font-weight: 800;
+      font-size: 0.9rem;
+      padding: 0.75rem 1.5rem;
+      border-radius: 30px;
+      z-index: 9999;
+      transition: transform 0.3s ease;
+      white-space: nowrap;
+    }
+
+    #toast.show { transform: translateX(-50%) translateY(0); }
+
+    /* ── Responsive ──────────────────────────────────────── */
+    @media (max-width: 480px) {
+      .prompt-grid { grid-template-columns: 1fr; }
+      .top-bar-title { font-size: 1.1rem; }
+      .user-pill { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- LANDING / LOGIN -->
+<div id="landing">
+  <div class="landing-title">I Ain't Got Time<br>For This Shit Today</div>
+  <div class="landing-sub">TikTok Prompts on the Go!</div>
+  <div class="login-box">
+    <h2>🔒 Members Only</h2>
+    <input type="email" id="login-email" placeholder="Email address" onkeydown="handleLoginKey(event)">
+    <input type="password" id="login-pass" placeholder="Password" onkeydown="handleLoginKey(event)">
+    <button class="btn-login" onclick="doLogin()">Let Me In 🚀</button>
+    <div class="login-error" id="login-error"></div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app">
+
+  <div class="top-bar">
+    <div class="top-bar-title">IAGFTFST</div>
+    <div class="top-bar-right">
+      <span class="user-pill" id="user-email"></span>
+      <button class="btn-logout" onclick="doLogout()">Sign Out</button>
+    </div>
+  </div>
+
+  <div class="main">
+
+    <div class="filter-row">
+      <button class="cat-filter-btn active" onclick="filterCategory('All', this)">🔥 All</button>
+      <button class="cat-filter-btn" onclick="filterCategory('Sneakers', this)">👟 Sneakers</button>
+      <button class="cat-filter-btn" onclick="filterCategory('Home & Outdoor', this)">🏠 Home & Outdoor</button>
+      <button class="cat-filter-btn" onclick="filterCategory('Apparel', this)">👕 Apparel</button>
+      <button class="cat-filter-btn" onclick="filterCategory('Tools', this)">🛠️ Tools</button>
+      <button class="cat-filter-btn" onclick="filterCategory('Seasonal', this)">🎃 Seasonal</button>
+      <button class="btn-submit-new" onclick="openSubmit()">+ Add Prompt</button>
+    </div>
+
+    <div class="prompt-grid" id="prompt-grid">
+      <div class="loading">Loading prompts...</div>
+    </div>
+
+  </div>
+
+</div>
+
+<!-- SUBMIT MODAL -->
+<div class="modal-overlay" id="submit-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">Add a Prompt</span>
+      <button class="modal-close" onclick="closeSubmit()">✕ Close</button>
+    </div>
+
+    <label>Product Name</label>
+    <input type="text" id="sub-product" placeholder="e.g. Nike Air Max 90 Volt">
+
+    <label>Short Description</label>
+    <input type="text" id="sub-desc" placeholder="What makes this product worth posting?">
+
+    <label>Category</label>
+    <select id="sub-category">
+      <option>Sneakers</option>
+      <option>Home & Outdoor</option>
+      <option>Apparel</option>
+      <option>Tools</option>
+      <option>Seasonal</option>
+    </select>
+
+    <!-- Image upload disabled on free Firebase plan -->
+    <input type="file" id="sub-image" accept="image/*" style="display:none;">
+
+    <label>AI Cast Prompt</label>
+    <textarea id="sub-prompt" placeholder="Paste the full AI Cast prompt here..."></textarea>
+
+    <div class="proven-row">
+      <input type="checkbox" id="sub-proven">
+      <span>✅ Mark as Proven Seller (actually converted sales)</span>
+    </div>
+
+    <div class="sub-status" id="sub-status"></div>
+    <button class="btn-submit" id="sub-btn" onclick="submitPrompt()">Submit Prompt 🔥</button>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div id="toast"></div>
+
+<script>
+  var CAT_COLORS = {
+    "Sneakers":       "#FFE500",
+    "Home & Outdoor": "#00E676",
+    "Apparel":        "#B388FF",
+    "Tools":          "#FF9100",
+    "Seasonal":       "#FF4D4D"
+  };
+</script>
+
+</body>
+</html>
