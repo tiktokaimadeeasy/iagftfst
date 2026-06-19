@@ -164,6 +164,8 @@
         var imageUrl = "";
         // Image upload disabled on free plan
 
+        var tiktokUrl = document.getElementById("sub-tiktok-url").value.trim();
+
         await addDoc(collection(db, "prompts"), {
           productName:  productName,
           description:  description,
@@ -171,6 +173,7 @@
           prompt:       prompt,
           proven:       proven,
           imageUrl:     imageUrl,
+          tiktokUrl:    tiktokUrl,
           submittedBy:  currentUser.email.split("@")[0],
           createdAt:    serverTimestamp()
         });
@@ -178,9 +181,10 @@
         document.getElementById("sub-product").value  = "";
         document.getElementById("sub-desc").value     = "";
         document.getElementById("sub-prompt").value   = "";
-        document.getElementById("sub-image").value    = "";
-        document.getElementById("sub-proven").checked = false;
-        document.getElementById("sub-category").value = "Sneakers";
+        document.getElementById("sub-image").value        = "";
+        document.getElementById("sub-proven").checked     = false;
+        document.getElementById("sub-category").value     = "Sneakers";
+        document.getElementById("sub-tiktok-url").value   = "";
 
         status.textContent = "✅ Prompt submitted!";
         status.className   = "sub-status success";
@@ -552,6 +556,25 @@
 
     .btn-copy:hover { opacity: 0.85; }
 
+    .btn-tiktok {
+      flex: 1;
+      padding: 0.65rem;
+      border-radius: 8px;
+      border: none;
+      background: #ff2d5522;
+      color: #ff2d55;
+      border: 1px solid #ff2d5544;
+      font-size: 0.85rem;
+      font-weight: 700;
+      cursor: pointer;
+      font-family: inherit;
+      text-decoration: none;
+      text-align: center;
+      transition: opacity 0.2s;
+    }
+
+    .btn-tiktok:hover { opacity: 0.8; }
+
     .btn-delete {
       padding: 0.65rem 0.85rem;
       border-radius: 8px;
@@ -792,6 +815,9 @@
 
     <label>AI Cast Prompt</label>
     <textarea id="sub-prompt" placeholder="Paste the full AI Cast prompt here..."></textarea>
+
+    <label>TikTok Video Link (optional)</label>
+    <input type="text" id="sub-tiktok-url" placeholder="https://www.tiktok.com/@...">
 
     <div class="proven-row">
       <input type="checkbox" id="sub-proven">
